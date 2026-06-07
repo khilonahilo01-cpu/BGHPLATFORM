@@ -27,8 +27,8 @@ input,select,textarea,button{font-family:inherit;}
 const {useState,useEffect,useMemo,useCallback,useRef}=React;
 
 // ─── CONFIG ─── بدل بمفاتيح Supabase الجديد ──────────────
-const SB_URL='YOUR_SUPABASE_URL';
-const SB_KEY='YOUR_SUPABASE_KEY';
+const SB_URL='https://gdmjyloknrolclzgysie.supabase.co';
+const SB_KEY='sb_publishable_dcoccqYJ8INXNgDbIwQFow_TPICh5k3';
 
 // ─── THEME ────────────────────────────────────────────────
 let _theme=localStorage.getItem('_erp_t')||'light';
@@ -96,18 +96,33 @@ try{if(SB_URL&&SB_URL!=='YOUR_SUPABASE_URL')sb=supabase.createClient(SB_URL,SB_K
 
 const DB={
   async load(){
-    const local=localStorage.getItem('_erp');
-    const fb=local?JSON.parse(local):{...EMPTY};
-    if(!sb)return fb;
-    try{const{data,error}=await sb.from('erp_data').select('data').eq('id','main').single();if(error)return fb;return data?.data||fb;}
-    catch(e){return fb;}
+    if(!sb){
+      const local=localStorage.getItem('_erp');
+      return local?JSON.parse(local):{...EMPTY};
+    }
+    try{
+      const{data,error}=await sb.from('erp_data').select('data').eq('id','main').single();
+      if(error||!data){
+        const local=localStorage.getItem('_erp');
+        return local?JSON.parse(local):{...EMPTY};
+      }
+      const d=data.data||{...EMPTY};
+      localStorage.setItem('_erp',JSON.stringify(d));
+      return d;
+    }catch(e){
+      const local=localStorage.getItem('_erp');
+      return local?JSON.parse(local):{...EMPTY};
+    }
   },
   async save(data){
     localStorage.setItem('_erp',JSON.stringify(data));
     if(!sb)return;
-    try{const{data:u,error}=await sb.from('erp_data').update({data,updated_at:new Date().toISOString()}).eq('id','main').select();
-      if(error)throw error;if(!u||u.length===0)await sb.from('erp_data').insert({id:'main',data});}
-    catch(e){console.error(e);}
+    try{
+      await sb.from('erp_data').upsert(
+        {id:'main',data,updated_at:new Date().toISOString()},
+        {onConflict:'id'}
+      );
+    }catch(e){console.error('Save error:',e);}
   }
 };
 
