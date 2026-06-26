@@ -61,7 +61,7 @@ const isToday=d=>d&&new Date(d).toDateString()===new Date().toDateString();
 const daysUntil=d=>{if(!d)return null;return Math.ceil((new Date(d)-new Date())/86400000);};
 const todayStr=()=>new Date().toISOString().slice(0,10);
 
-const EMPTY={adminPassword:null,members:[],contacts:[],deals:[],clients:[],tasks:[],comments:[],invoices:[],expenses:[],activity:[]};
+const EMPTY={adminPassword:null,members:[],contacts:[],deals:[],clients:[],tasks:[],comments:[],invoices:[],expenses:[],activity:[],services:[]};
 
 // CRM Pipeline stages
 const DEAL_STAGES=[
@@ -306,10 +306,15 @@ function AdminApp({data,persist,showToast,logout}){
     {id:'crm',l:'CRM',ic:'crm'},
     {id:'clients',l:'الزبائن',ic:'building'},
     {id:'tasks',l:'المهام',ic:'kanban'},
+    {id:'services',l:'SERVICE',ic:'star'},
     {id:'invoices',l:'الفواتير',ic:'invoice'},
     {id:'reports',l:'تقارير',ic:'chart'},
     {id:'team',l:'الفريق',ic:'users'},
   ];
+
+  const addService=s=>{persist({...data,services:[{id:uid(),...s,createdAt:new Date().toISOString()},...(data.services||[])]});showToast('تم الإضافة ✅');};
+  const updService=(id,p)=>persist({...data,services:(data.services||[]).map(s=>s.id===id?{...s,...p}:s)});
+  const delService=id=>{if(!confirm('متأكد؟'))return;persist({...data,services:(data.services||[]).filter(s=>s.id!==id)});showToast('تم الحذف');};
 
   if(selClient){
     return <TaskBoard client={selClient} data={data} onBack={()=>setSelClient(null)}
@@ -348,6 +353,7 @@ function AdminApp({data,persist,showToast,logout}){
         {mod==='crm'&&<CRMModule data={data} addContact={addContact} updContact={updContact} delContact={delContact} moveContact={moveContact}/>}
         {mod==='clients'&&<ClientsModule data={data} addClient={addClient} updClient={updClient} delClient={delClient} onSelectClient={setSelClient}/>}
         {mod==='tasks'&&<TasksOverview data={data} onSelectClient={setSelClient}/>}
+        {mod==='services'&&<ServiceModule data={data} addService={addService} updService={updService} delService={delService}/>}
         {mod==='invoices'&&<InvoicesModule data={data} addInvoice={addInvoice} updInvoice={updInvoice} delInvoice={delInvoice} addExpense={addExpense} delExpense={delExpense}/>}
         {mod==='reports'&&<ReportsModule data={data}/>}
         {mod==='team'&&<TeamModule data={data} addMember={addMember} updMember={updMember} delMember={delMember}/>}
@@ -828,32 +834,174 @@ function InvoicesModule({data,addInvoice,updInvoice,delInvoice,addExpense,delExp
   const[tab,setTab]=useState('invoices');
   const[showAdd,setShowAdd]=useState(false);
   const[showAddExp,setShowAddExp]=useState(false);
-  const totalPaid=data.invoices.filter(i=>i.status==='paid').reduce((s,i)=>s+Number(i.amount),0);
-  const totalPending=data.invoices.filter(i=>i.status==='pending').reduce((s,i)=>s+Number(i.amount),0);
-  const totalExp=data.expenses.reduce((s,e)=>s+Number(e.amount),0);
+  const[showReport,setShowReport]=useState(false);
+
+  // Month filter — default to current month
+  const now=new Date();
+  const[selMonth,setSelMonth]=useState(now.getMonth());
+  const[selYear,setSelYear]=useState(now.getFullYear());
+
+  const monthInvoices=data.invoices.filter(i=>{
+    const d=new Date(i.createdAt);
+    return d.getMonth()===selMonth&&d.getFullYear()===selYear;
+  });
+  const monthExpenses=data.expenses.filter(e=>{
+    const d=new Date(e.date||e.createdAt);
+    return d.getMonth()===selMonth&&d.getFullYear()===selYear;
+  });
+
+  const totalPaid=monthInvoices.filter(i=>i.status==='paid').reduce((s,i)=>s+Number(i.amount),0);
+  const totalPending=monthInvoices.filter(i=>i.status==='pending').reduce((s,i)=>s+Number(i.amount),0);
+  const totalExp=monthExpenses.reduce((s,e)=>s+Number(e.amount),0);
+
+  const monthLabel=new Date(selYear,selMonth,1).toLocaleDateString('ar',{month:'long',year:'numeric'});
+  const goMonth=delta=>{
+    let m=selMonth+delta,y=selYear;
+    if(m<0){m=11;y--;} if(m>11){m=0;y++;}
+    setSelMonth(m);setSelYear(y);
+  };
+  const isCurrentMonth=selMonth===now.getMonth()&&selYear===now.getFullYear();
+
   return(
     <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.75rem'}}>
         <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>الفواتير والمصاريف</h2>
-        <button onClick={()=>tab==='invoices'?setShowAdd(true):setShowAddExp(true)} style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
-          <Ic n="plus" size={16} color="white"/> {tab==='invoices'?'فاتورة جديدة':'مصروف جديد'}
-        </button>
+        <div style={{display:'flex',gap:'0.5rem'}}>
+          <button onClick={()=>setShowReport(true)} style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',border:`1px solid ${B.border}`,background:'transparent',color:B.text,fontWeight:'700',cursor:'pointer',fontSize:'0.85rem'}}>
+            📊 تقرير الشهر
+          </button>
+          <button onClick={()=>tab==='invoices'?setShowAdd(true):setShowAddExp(true)} style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
+            <Ic n="plus" size={16} color="white"/> {tab==='invoices'?'فاتورة جديدة':'مصروف جديد'}
+          </button>
+        </div>
       </div>
+
+      {/* Month selector */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.625rem 0.875rem'}}>
+        <button onClick={()=>goMonth(-1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevR" size={15}/></button>
+        <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+          <span style={{fontWeight:'800',color:B.text,fontSize:'0.95rem'}}>📅 {monthLabel}</span>
+          {isCurrentMonth&&<Badge label="الشهر الحالي" color={B.accent}/>}
+        </div>
+        <button onClick={()=>goMonth(1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevL" size={15}/></button>
+      </div>
+
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'0.75rem'}}>
-        <StatCard label="إجمالي المقبوض" value={`${fmt(totalPaid)} دج`} ic="wallet" color={B.success}/>
-        <StatCard label="فواتير معلقة" value={`${fmt(totalPending)} دج`} ic="clock" color={B.warning}/>
-        <StatCard label="إجمالي المصاريف" value={`${fmt(totalExp)} دج`} ic="trending" color={B.danger}/>
+        <StatCard label="مقبوض هذا الشهر" value={`${fmt(totalPaid)} دج`} ic="wallet" color={B.success}/>
+        <StatCard label="معلق هذا الشهر" value={`${fmt(totalPending)} دج`} ic="clock" color={B.warning}/>
+        <StatCard label="مصاريف الشهر" value={`${fmt(totalExp)} دج`} ic="trending" color={B.danger}/>
       </div>
+
       <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'0.875rem',border:`1px solid ${B.border}`,width:'fit-content'}}>
         {[{v:'invoices',l:'الفواتير'},{v:'expenses',l:'المصاريف'}].map(t=>(
           <button key={t.v} onClick={()=>setTab(t.v)} style={{padding:'0.4rem 1rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:tab===t.v?B.accent:'transparent',color:tab===t.v?'white':B.muted,transition:'all 0.15s'}}>{t.l}</button>
         ))}
       </div>
-      {tab==='invoices'&&<InvoicesList data={data} updInvoice={updInvoice} delInvoice={delInvoice}/>}
-      {tab==='expenses'&&<ExpensesList data={data} delExpense={delExpense}/>}
+      {tab==='invoices'&&<InvoicesList data={{...data,invoices:monthInvoices}} updInvoice={updInvoice} delInvoice={delInvoice}/>}
+      {tab==='expenses'&&<ExpensesList data={{...data,expenses:monthExpenses}} delExpense={delExpense}/>}
       {showAdd&&<InvoiceForm data={data} onClose={()=>setShowAdd(false)} onSave={inv=>{addInvoice(inv);setShowAdd(false);}}/>}
       {showAddExp&&<ExpenseForm onClose={()=>setShowAddExp(false)} onSave={exp=>{addExpense(exp);setShowAddExp(false);}}/>}
+      {showReport&&<MonthReportModal data={data} invoices={monthInvoices} expenses={monthExpenses} monthLabel={monthLabel} onClose={()=>setShowReport(false)}/>}
     </div>
+  );
+}
+
+function MonthReportModal({data,invoices,expenses,monthLabel,onClose}){
+  const paid=invoices.filter(i=>i.status==='paid');
+  const pending=invoices.filter(i=>i.status==='pending');
+  const overdue=invoices.filter(i=>i.status==='pending'&&i.dueDate&&new Date(i.dueDate)<new Date());
+  const totalPaid=paid.reduce((s,i)=>s+Number(i.amount),0);
+  const totalPending=pending.reduce((s,i)=>s+Number(i.amount),0);
+  const totalExp=expenses.reduce((s,e)=>s+Number(e.amount),0);
+  const netProfit=totalPaid-totalExp;
+
+  // Group pending by client — "من بقى يدفعلي"
+  const pendingByClient={};
+  pending.forEach(i=>{
+    const cl=data.clients.find(c=>c.id===i.clientId);
+    const name=cl?.name||'—';
+    if(!pendingByClient[name])pendingByClient[name]=0;
+    pendingByClient[name]+=Number(i.amount);
+  });
+
+  // Group paid by client — "شحال دفعولي"
+  const paidByClient={};
+  paid.forEach(i=>{
+    const cl=data.clients.find(c=>c.id===i.clientId);
+    const name=cl?.name||'—';
+    if(!paidByClient[name])paidByClient[name]=0;
+    paidByClient[name]+=Number(i.amount);
+  });
+
+  return(
+    <Modal onClose={onClose} title={`📊 تقرير ${monthLabel}`} width="32rem">
+      <div style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+
+        {/* Summary */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+          <div style={{background:`${B.success}10`,border:`1px solid ${B.success}33`,borderRadius:'1rem',padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:'1.4rem',fontWeight:'900',color:B.success,fontVariantNumeric:'tabular-nums'}}>{fmt(totalPaid)}</div>
+            <div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>دج دخلوا (مدفوع)</div>
+          </div>
+          <div style={{background:`${B.warning}10`,border:`1px solid ${B.warning}33`,borderRadius:'1rem',padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:'1.4rem',fontWeight:'900',color:B.warning,fontVariantNumeric:'tabular-nums'}}>{fmt(totalPending)}</div>
+            <div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>دج باقي يدفعو</div>
+          </div>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+          <div style={{background:`${B.danger}10`,border:`1px solid ${B.danger}33`,borderRadius:'1rem',padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:'1.2rem',fontWeight:'900',color:B.danger,fontVariantNumeric:'tabular-nums'}}>{fmt(totalExp)}</div>
+            <div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>دج مصاريف</div>
+          </div>
+          <div style={{background:`${netProfit>=0?B.success:B.danger}10`,border:`1px solid ${netProfit>=0?B.success:B.danger}33`,borderRadius:'1rem',padding:'1rem',textAlign:'center'}}>
+            <div style={{fontSize:'1.2rem',fontWeight:'900',color:netProfit>=0?B.success:B.danger,fontVariantNumeric:'tabular-nums'}}>{fmt(netProfit)}</div>
+            <div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>دج ربح صافي</div>
+          </div>
+        </div>
+
+        {/* Overdue alert */}
+        {overdue.length>0&&(
+          <div style={{background:`${B.danger}10`,border:`1px solid ${B.danger}33`,borderRadius:'1rem',padding:'0.875rem'}}>
+            <div style={{fontWeight:'700',color:B.danger,fontSize:'0.85rem'}}>⚠️ {overdue.length} فاتورة متأخرة الدفع</div>
+          </div>
+        )}
+
+        {/* Who still owes money */}
+        {Object.keys(pendingByClient).length>0&&(
+          <div>
+            <div style={{fontWeight:'800',color:B.text,fontSize:'0.9rem',marginBottom:'0.625rem'}}>🟡 شحال باقي يدفعولي</div>
+            <div style={{background:B.card2,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+              {Object.entries(pendingByClient).sort((a,b)=>b[1]-a[1]).map(([name,amt],i,arr)=>(
+                <div key={name} style={{display:'flex',justifyContent:'space-between',padding:'0.625rem 0.875rem',borderBottom:i<arr.length-1?`1px solid ${B.border}`:'none'}}>
+                  <span style={{fontWeight:'600',color:B.text,fontSize:'0.85rem'}}>{name}</span>
+                  <span style={{fontWeight:'700',color:B.warning,fontVariantNumeric:'tabular-nums'}}>{fmt(amt)} دج</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Who paid */}
+        {Object.keys(paidByClient).length>0&&(
+          <div>
+            <div style={{fontWeight:'800',color:B.text,fontSize:'0.9rem',marginBottom:'0.625rem'}}>✅ شحال دفعولي</div>
+            <div style={{background:B.card2,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+              {Object.entries(paidByClient).sort((a,b)=>b[1]-a[1]).map(([name,amt],i,arr)=>(
+                <div key={name} style={{display:'flex',justifyContent:'space-between',padding:'0.625rem 0.875rem',borderBottom:i<arr.length-1?`1px solid ${B.border}`:'none'}}>
+                  <span style={{fontWeight:'600',color:B.text,fontSize:'0.85rem'}}>{name}</span>
+                  <span style={{fontWeight:'700',color:B.success,fontVariantNumeric:'tabular-nums'}}>{fmt(amt)} دج</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {invoices.length===0&&expenses.length===0&&(
+          <div style={{textAlign:'center',padding:'2rem',color:B.muted,fontSize:'0.875rem'}}>ما كاينش فواتير أو مصاريف هذا الشهر</div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -935,6 +1083,400 @@ function ExpenseForm({onClose,onSave}){
       <Field label="الوصف"><input value={f.description} onChange={e=>setF({...f,description:e.target.value})} placeholder="وصف المصروف" style={INP}/></Field>
       <Field label="التاريخ"><input type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})} style={INP}/></Field>
       <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>سجل المصروف</button>
+    </div>
+  </Modal>);
+}
+
+// ─── SERVICE MODULE ───────────────────────────────────────
+const SVC_UNITS=[
+  {id:'hour',l:'/ ساعة'},
+  {id:'day',l:'/ يوم'},
+  {id:'session',l:'/ جلسة'},
+  {id:'project',l:'/ مشروع'},
+  {id:'month',l:'/ شهر'},
+];
+const SVC_CATS=[
+  {id:'studio',l:'🎙️ استوديو'},
+  {id:'equipment',l:'🎥 معدات'},
+  {id:'design',l:'🎨 ديزاين'},
+  {id:'editing',l:'🎬 مونتاج'},
+  {id:'photo',l:'📷 تصوير'},
+  {id:'social',l:'📱 سوشيال'},
+  {id:'other',l:'📦 أخرى'},
+];
+const BOOK_STATUS=[
+  {id:'pending',l:'معلق',c:'#d97706'},
+  {id:'confirmed',l:'مؤكد',c:'#16a34a'},
+  {id:'done',l:'منتهي',c:'#888'},
+  {id:'cancelled',l:'ملغي',c:'#dc2626'},
+];
+
+function ServiceModule({data,addService,updService,delService}){
+  const[tab,setTab]=useState('services'); // services | bookings
+  const[showAddSvc,setShowAddSvc]=useState(false);
+  const[showAddBook,setShowAddBook]=useState(false);
+  const[editSvc,setEditSvc]=useState(null);
+  const services=data.services||[];
+  // bookings stored inside each service: service.bookings[]
+  const allBookings=services.flatMap(s=>(s.bookings||[]).map(b=>({...b,serviceName:s.name,serviceId:s.id,unitPrice:s.price,unit:s.unit})));
+  const pendingBookings=allBookings.filter(b=>b.status==='pending'||b.status==='confirmed');
+  const totalRevenue=allBookings.filter(b=>b.status==='done').reduce((s,b)=>s+Number(b.total||0),0);
+
+  const addBooking=(serviceId,booking)=>{
+    const updated=services.map(s=>s.id===serviceId?{...s,bookings:[...(s.bookings||[]),{id:uid(),...booking,createdAt:new Date().toISOString()}]}:s);
+    updService(serviceId,{bookings:updated.find(s=>s.id===serviceId).bookings});
+  };
+  const updBooking=(serviceId,bookingId,patch)=>{
+    const svc=services.find(s=>s.id===serviceId);
+    if(!svc)return;
+    updService(serviceId,{bookings:(svc.bookings||[]).map(b=>b.id===bookingId?{...b,...patch}:b)});
+  };
+  const delBooking=(serviceId,bookingId)=>{
+    const svc=services.find(s=>s.id===serviceId);
+    if(!svc)return;
+    updService(serviceId,{bookings:(svc.bookings||[]).filter(b=>b.id!==bookingId)});
+  };
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.75rem'}}>
+        <div>
+          <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>SERVICE</h2>
+          <p style={{fontSize:'0.75rem',color:B.muted}}>{services.length} خدمة · {allBookings.length} حجز · {fmt(totalRevenue)} دج مقبوضة</p>
+        </div>
+        <button onClick={()=>tab==='services'?setShowAddSvc(true):setShowAddBook(true)}
+          style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
+          <Ic n="plus" size={16} color="white"/> {tab==='services'?'زيد خدمة':'زيد حجز'}
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'0.625rem'}}>
+        <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
+          <div style={{fontSize:'1.5rem',fontWeight:'900',color:B.info}}>{services.length}</div>
+          <div style={{fontSize:'0.72rem',color:B.muted}}>خدمات</div>
+        </div>
+        <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
+          <div style={{fontSize:'1.5rem',fontWeight:'900',color:B.warning}}>{pendingBookings.length}</div>
+          <div style={{fontSize:'0.72rem',color:B.muted}}>حجوزات نشطة</div>
+        </div>
+        <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
+          <div style={{fontSize:'1.1rem',fontWeight:'900',color:B.success,fontVariantNumeric:'tabular-nums'}}>{fmt(totalRevenue)}</div>
+          <div style={{fontSize:'0.72rem',color:B.muted}}>دج مقبوضة</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'0.875rem',border:`1px solid ${B.border}`,width:'fit-content'}}>
+        {[{v:'services',l:'📋 الخدمات'},{v:'bookings',l:'📅 الحجوزات'},{v:'calendar',l:'🗓️ كالندريي'}].map(t=>(
+          <button key={t.v} onClick={()=>setTab(t.v)} style={{padding:'0.4rem 1rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:tab===t.v?B.accent:'transparent',color:tab===t.v?'white':B.muted,transition:'all 0.15s'}}>{t.l}</button>
+        ))}
+      </div>
+
+      {/* Services list */}
+      {tab==='services'&&(
+        services.length===0
+          ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش خدمات — زيد مثلاً "كراء استوديو بالساعة"</div>
+          :<div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+            {services.map(svc=>{
+              const cat=SVC_CATS.find(c=>c.id===svc.cat);
+              const unit=SVC_UNITS.find(u=>u.id===svc.unit);
+              const bkCount=(svc.bookings||[]).filter(b=>b.status!=='cancelled').length;
+              const bkRev=(svc.bookings||[]).filter(b=>b.status==='done').reduce((s,b)=>s+Number(b.total||0),0);
+              return(
+                <div key={svc.id} style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'1rem',display:'flex',alignItems:'center',gap:'0.75rem'}}>
+                  <div style={{width:46,height:46,borderRadius:'0.875rem',background:B.inputBg,display:'grid',placeItems:'center',fontSize:'1.4rem',flexShrink:0}}>{cat?.l.split(' ')[0]||'📦'}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:'800',color:B.text,fontSize:'0.95rem'}}>{svc.name}</div>
+                    <div style={{fontSize:'0.75rem',color:B.muted,display:'flex',gap:'0.625rem',flexWrap:'wrap',marginTop:'3px'}}>
+                      <span style={{color:B.accent,fontWeight:'700',fontVariantNumeric:'tabular-nums'}}>{fmt(svc.price)} دج {unit?.l}</span>
+                      <span>{cat?.l}</span>
+                      {bkCount>0&&<span style={{color:B.info}}>📅 {bkCount} حجز</span>}
+                      {bkRev>0&&<span style={{color:B.success}}>💰 {fmt(bkRev)} دج</span>}
+                    </div>
+                    {svc.desc&&<div style={{fontSize:'0.75rem',color:B.muted,marginTop:'3px'}}>{svc.desc}</div>}
+                  </div>
+                  <div style={{display:'flex',gap:'0.25rem',flexShrink:0}}>
+                    <button onClick={()=>{setShowAddBook(true);}} style={{padding:'0.35rem 0.625rem',borderRadius:'0.5rem',border:`1px solid ${B.accent}44`,background:`${B.accent}10`,color:B.accent,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700'}}>+ حجز</button>
+                    <button onClick={()=>{setEditSvc(svc);setShowAddSvc(true);}} style={{padding:'0.4rem',border:`1px solid ${B.border}`,background:'transparent',borderRadius:'0.5rem',cursor:'pointer',display:'flex'}}><Ic n="pencil" size={14}/></button>
+                    <button onClick={()=>delService(svc.id)} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={14} color={B.danger}/></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+      )}
+
+      {/* Bookings list */}
+      {tab==='bookings'&&(
+        allBookings.length===0
+          ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش حجوزات بعد</div>
+          :<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+            {allBookings.sort((a,b)=>new Date(b.date)-new Date(a.date)).map((b,i)=>{
+              const st=BOOK_STATUS.find(s=>s.id===b.status);
+              return(
+                <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<allBookings.length-1?`1px solid ${B.border}`:'none'}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap',marginBottom:'3px'}}>
+                      <span style={{fontWeight:'700',color:B.text,fontSize:'0.875rem'}}>{b.clientName||'—'}</span>
+                      <Badge label={b.serviceName} color={B.info}/>
+                    </div>
+                    <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                      <span>📅 {fmtD(b.date)}</span>
+                      {b.hours&&<span>⏱️ {b.hours} ساعة</span>}
+                      <span style={{color:B.accent,fontWeight:'600',fontVariantNumeric:'tabular-nums'}}>💰 {fmt(b.total)} دج</span>
+                    </div>
+                    {b.notes&&<div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>{b.notes}</div>}
+                  </div>
+                  <div style={{display:'flex',gap:'0.375rem',alignItems:'center',flexShrink:0}}>
+                    <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})}
+                      style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.72rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
+                      {BOOK_STATUS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}
+                    </select>
+                    <button onClick={()=>delBooking(b.serviceId,b.id)} style={{padding:'0.35rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={14} color={B.danger}/></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+      )}
+
+      {/* Calendar view */}
+      {tab==='calendar'&&<BookingCalendar allBookings={allBookings} services={services} updBooking={updBooking} delBooking={delBooking}/>}
+
+      {showAddSvc&&<SvcForm initial={editSvc} onClose={()=>{setShowAddSvc(false);setEditSvc(null);}} onSave={s=>{if(editSvc)updService(editSvc.id,s);else addService({...s,bookings:[]});setShowAddSvc(false);setEditSvc(null);}}/>}
+      {showAddBook&&<BookingForm services={services} clients={data.clients} onClose={()=>setShowAddBook(false)} onSave={(serviceId,b)=>{addBooking(serviceId,b);setShowAddBook(false);}}/>}
+    </div>
+  );
+}
+
+function SvcForm({initial,onClose,onSave}){
+  const[f,setF]=useState(initial||{name:'',cat:'studio',price:'',unit:'hour',desc:''});
+  const save=()=>{if(!f.name.trim()||!f.price)return alert('دخل الاسم والسعر');onSave({...f,price:Number(f.price)});};
+  return(<Modal onClose={onClose} title={initial?'تعديل الخدمة':'خدمة جديدة'}>
+    <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+      <Field label="اسم الخدمة"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="مثال: كراء استوديو A" style={INP} autoFocus/></Field>
+      <Field label="الفئة">
+        <div style={{display:'flex',gap:'0.375rem',flexWrap:'wrap'}}>
+          {SVC_CATS.map(c=>(
+            <button key={c.id} onClick={()=>setF({...f,cat:c.id})}
+              style={{padding:'0.375rem 0.75rem',borderRadius:'9999px',border:`1px solid ${f.cat===c.id?B.accent:B.border}`,background:f.cat===c.id?`${B.accent}15`:'transparent',color:f.cat===c.id?B.accent:B.muted,cursor:'pointer',fontSize:'0.78rem',fontWeight:'700'}}>
+              {c.l}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+        <Field label="السعر (دج)"><input type="number" value={f.price} onChange={e=>setF({...f,price:e.target.value})} placeholder="0" style={INP}/></Field>
+        <Field label="وحدة التسعير">
+          <select value={f.unit} onChange={e=>setF({...f,unit:e.target.value})} style={INP}>
+            {SVC_UNITS.map(u=><option key={u.id} value={u.id}>{u.l}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="وصف (اختياري)"><textarea value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} placeholder="تجهيزات، شروط الاستخدام..." style={{...INP,height:64,resize:'none'}}/></Field>
+      <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>{initial?'حفظ':'زيد'}</button>
+    </div>
+  </Modal>);
+}
+
+// ─── BOOKING CALENDAR ─────────────────────────────────────
+function BookingCalendar({allBookings,services,updBooking,delBooking}){
+  const[viewDate,setViewDate]=useState(new Date());
+  const[selDay,setSelDay]=useState(null);
+  const[svcFilter,setSvcFilter]=useState('');
+
+  const filteredBookings=svcFilter?allBookings.filter(b=>b.serviceId===svcFilter):allBookings;
+
+  const year=viewDate.getFullYear();
+  const month=viewDate.getMonth();
+  const firstDay=new Date(year,month,1);
+  const lastDay=new Date(year,month+1,0);
+  const daysInMonth=lastDay.getDate();
+  // Arabic week starts Sunday=0 but getDay() in JS: Sun=0...Sat=6. We want grid starting Sunday.
+  const startWeekday=firstDay.getDay();
+  const todayD=new Date();todayD.setHours(0,0,0,0);
+
+  const monthLabel=viewDate.toLocaleDateString('ar',{month:'long',year:'numeric'});
+
+  // Map date string -> bookings
+  const byDate={};
+  filteredBookings.forEach(b=>{
+    if(!b.date)return;
+    const key=b.date.slice(0,10);
+    if(!byDate[key])byDate[key]=[];
+    byDate[key].push(b);
+  });
+
+  const cells=[];
+  for(let i=0;i<startWeekday;i++)cells.push(null);
+  for(let d=1;d<=daysInMonth;d++)cells.push(d);
+
+  const goMonth=delta=>{const n=new Date(viewDate);n.setMonth(n.getMonth()+delta);setViewDate(n);};
+
+  const dayKey=d=>`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const selDayBookings=selDay?byDate[dayKey(selDay)]||[]:[];
+
+  const WEEKDAYS=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:'0.875rem'}}>
+      {/* Service filter */}
+      {services.length>1&&(
+        <div style={{display:'flex',gap:'0.375rem',overflowX:'auto',paddingBottom:'2px'}}>
+          <button onClick={()=>setSvcFilter('')} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${!svcFilter?B.accent:B.border}`,background:!svcFilter?`${B.accent}15`:'transparent',color:!svcFilter?B.accent:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>كل الخدمات</button>
+          {services.map(s=>(
+            <button key={s.id} onClick={()=>setSvcFilter(svcFilter===s.id?'':s.id)} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${svcFilter===s.id?B.accent:B.border}`,background:svcFilter===s.id?`${B.accent}15`:'transparent',color:svcFilter===s.id?B.accent:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>{s.name}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Calendar card */}
+      <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'1rem',overflow:'hidden'}}>
+        {/* Month nav */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
+          <button onClick={()=>goMonth(-1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevR" size={16}/></button>
+          <div style={{fontWeight:'800',color:B.text,fontSize:'1rem'}}>{monthLabel}</div>
+          <button onClick={()=>goMonth(1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevL" size={16}/></button>
+        </div>
+
+        {/* Weekday headers */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'2px',marginBottom:'4px'}}>
+          {WEEKDAYS.map(w=><div key={w} style={{textAlign:'center',fontSize:'0.68rem',fontWeight:'700',color:B.muted,padding:'4px 0'}}>{w}</div>)}
+        </div>
+
+        {/* Day grid */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'3px'}}>
+          {cells.map((d,i)=>{
+            if(d===null)return <div key={i}/>;
+            const key=dayKey(d);
+            const dayBookings=byDate[key]||[];
+            const cellDate=new Date(year,month,d);
+            const isToday_=cellDate.getTime()===todayD.getTime();
+            const isSel=selDay===d;
+            const hasBooking=dayBookings.length>0;
+            const hasConfirmed=dayBookings.some(b=>b.status==='confirmed');
+            const hasPending=dayBookings.some(b=>b.status==='pending');
+
+            return(
+              <button key={i} onClick={()=>setSelDay(isSel?null:d)}
+                style={{
+                  aspectRatio:'1',minHeight:'42px',borderRadius:'0.625rem',border:isSel?`2px solid ${B.accent}`:isToday_?`2px solid ${B.info}`:`1px solid ${B.border}`,
+                  background:isSel?`${B.accent}15`:hasBooking?B.inputBg:'transparent',
+                  cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'2px',padding:'2px',position:'relative'
+                }}>
+                <span style={{fontSize:'0.78rem',fontWeight:isToday_?'800':'600',color:isToday_?B.info:B.text}}>{d}</span>
+                {hasBooking&&(
+                  <div style={{display:'flex',gap:'2px'}}>
+                    {dayBookings.slice(0,3).map((b,bi)=>(
+                      <div key={bi} style={{width:5,height:5,borderRadius:'50%',background:b.status==='confirmed'?B.success:b.status==='pending'?B.warning:b.status==='done'?B.muted:B.danger}}/>
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Legend */}
+        <div style={{display:'flex',gap:'0.75rem',marginTop:'0.875rem',paddingTop:'0.75rem',borderTop:`1px solid ${B.border}`,flexWrap:'wrap'}}>
+          {BOOK_STATUS.map(s=>(
+            <div key={s.id} style={{display:'flex',alignItems:'center',gap:'4px'}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:s.c}}/>
+              <span style={{fontSize:'0.68rem',color:B.muted}}>{s.l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Selected day bookings */}
+      {selDay&&(
+        <div style={{background:B.card,border:`1px solid ${B.accent}33`,borderRadius:'1.25rem',padding:'1rem'}}>
+          <div style={{fontWeight:'800',color:B.text,fontSize:'0.9rem',marginBottom:'0.75rem'}}>
+            📅 حجوزات {selDay} {monthLabel}
+          </div>
+          {selDayBookings.length===0
+            ?<div style={{fontSize:'0.8rem',color:B.muted,textAlign:'center',padding:'1rem'}}>ما كاينش حجوزات في هذا اليوم</div>
+            :<div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+              {selDayBookings.map(b=>{
+                const st=BOOK_STATUS.find(s=>s.id===b.status);
+                return(
+                  <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.625rem 0.75rem',background:B.inputBg,borderRadius:'0.75rem',borderRight:`3px solid ${st?.c||B.border}`}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap'}}>
+                        <span style={{fontWeight:'700',color:B.text,fontSize:'0.85rem'}}>{b.clientName}</span>
+                        <Badge label={b.serviceName} color={B.info}/>
+                      </div>
+                      <div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>
+                        {b.hours&&<span>⏱️ {b.hours} ساعة · </span>}
+                        <span style={{color:B.accent,fontWeight:'600'}}>💰 {fmt(b.total)} دج</span>
+                      </div>
+                    </div>
+                    <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})}
+                      style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.7rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
+                      {BOOK_STATUS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}
+                    </select>
+                    <button onClick={()=>delBooking(b.serviceId,b.id)} style={{padding:'0.3rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={13} color={B.danger}/></button>
+                  </div>
+                );
+              })}
+            </div>
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function BookingForm({services,clients,onClose,onSave}){
+  const[f,setF]=useState({serviceId:services[0]?.id||'',clientName:'',date:todayStr(),hours:'',total:'',status:'confirmed',notes:''});
+  const svc=services.find(s=>s.id===f.serviceId);
+  const unit=SVC_UNITS.find(u=>u.id===svc?.unit);
+  // Auto-calculate total when hours change
+  const calcTotal=h=>svc?.price&&h?Number(svc.price)*Number(h):f.total;
+  const save=()=>{if(!f.clientName.trim()||!f.date)return alert('دخل اسم الزبون والتاريخ');onSave(f.serviceId,{clientName:f.clientName,date:f.date,hours:f.hours,total:Number(f.total)||0,status:f.status,notes:f.notes});};
+  return(<Modal onClose={onClose} title="حجز جديد">
+    <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+      <Field label="الخدمة">
+        <select value={f.serviceId} onChange={e=>setF({...f,serviceId:e.target.value,total:''})} style={INP}>
+          {services.map(s=><option key={s.id} value={s.id}>{s.name} — {fmt(s.price)} دج {SVC_UNITS.find(u=>u.id===s.unit)?.l}</option>)}
+        </select>
+      </Field>
+      {svc&&<div style={{padding:'0.625rem 0.875rem',background:`${B.accent}10`,border:`1px solid ${B.accent}33`,borderRadius:'0.75rem',fontSize:'0.8rem',color:B.accent,fontWeight:'600'}}>
+        💰 {fmt(svc.price)} دج {unit?.l}
+      </div>}
+      <Field label="اسم الزبون / الزبون">
+        {clients.length>0
+          ?<select value={f.clientName} onChange={e=>setF({...f,clientName:e.target.value})} style={INP}>
+            <option value="">— اختار أو اكتب —</option>
+            {clients.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+          :<input value={f.clientName} onChange={e=>setF({...f,clientName:e.target.value})} placeholder="اسم الزبون" style={INP} autoFocus/>
+        }
+      </Field>
+      {clients.length>0&&!f.clientName&&<input value={f.clientName} onChange={e=>setF({...f,clientName:e.target.value})} placeholder="أو اكتب اسم آخر" style={INP}/>}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+        <Field label="📅 التاريخ"><input type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})} style={INP}/></Field>
+        {(svc?.unit==='hour')&&<Field label="⏱️ عدد الساعات">
+          <input type="number" value={f.hours} onChange={e=>{const h=e.target.value;setF({...f,hours:h,total:calcTotal(h)});}} placeholder="0" style={INP}/>
+        </Field>}
+      </div>
+      <Field label="💰 المجموع (دج)">
+        <input type="number" value={f.total} onChange={e=>setF({...f,total:e.target.value})} placeholder="0 — يحتسب تلقائياً" style={INP}/>
+      </Field>
+      <Field label="الحالة">
+        <div style={{display:'flex',gap:'0.375rem',flexWrap:'wrap'}}>
+          {BOOK_STATUS.filter(s=>s.id!=='done').map(s=>(
+            <button key={s.id} onClick={()=>setF({...f,status:s.id})}
+              style={{flex:1,padding:'0.4rem',borderRadius:'0.75rem',border:`1px solid ${f.status===s.id?s.c:B.border}`,background:f.status===s.id?`${s.c}15`:'transparent',color:f.status===s.id?s.c:B.muted,cursor:'pointer',fontWeight:'700',fontSize:'0.78rem'}}>
+              {s.l}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="ملاحظات"><input value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="أي معلومات إضافية..." style={INP}/></Field>
+      <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>أضف الحجز</button>
     </div>
   </Modal>);
 }
