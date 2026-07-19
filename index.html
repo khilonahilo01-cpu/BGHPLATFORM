@@ -61,7 +61,7 @@ const isToday=d=>d&&new Date(d).toDateString()===new Date().toDateString();
 const daysUntil=d=>{if(!d)return null;return Math.ceil((new Date(d)-new Date())/86400000);};
 const todayStr=()=>new Date().toISOString().slice(0,10);
 
-const EMPTY={adminPassword:null,members:[],contacts:[],deals:[],clients:[],tasks:[],comments:[],invoices:[],expenses:[],activity:[],services:[]};
+const EMPTY={adminPassword:null,members:[],contacts:[],deals:[],clients:[],tasks:[],comments:[],invoices:[],expenses:[],activity:[],services:[],memberPayments:[]};
 
 // CRM Pipeline stages
 const DEAL_STAGES=[
@@ -80,6 +80,7 @@ const TASK_STAGES=[
   {id:'edit',label:'مونتاج',icon:'🎬',color:'#b04a2f'},
   {id:'review',label:'مراجعة',icon:'👁',color:'#d97706'},
   {id:'done',label:'تسليم',icon:'✅',color:'#16a34a'},
+  {id:'post',label:'نشر',icon:'📤',color:'#0891b2'},
 ];
 
 const CTYPES=[{id:'reel',l:'ريلز',i:'🎥'},{id:'post',l:'بوست',i:'🖼'},{id:'story',l:'ستوري',i:'⭕'},{id:'carousel',l:'كاروسيل',i:'📱'},{id:'video',l:'فيديو',i:'🎞'},{id:'other',l:'أخرى',i:'📦'}];
@@ -221,7 +222,7 @@ function App(){
   if(!data.adminPassword)return <Setup onSetup={pw=>{const next={...data,adminPassword:hash(pw)};persist(next);const s={role:'admin'};setSession(s);localStorage.setItem('_erp_s',JSON.stringify(s));}}/>;
   if(!session)return <Login data={data} onLogin={s=>{setSession(s);localStorage.setItem('_erp_s',JSON.stringify(s));}}/>;
   const me=session.role==='member'?data.members.find(m=>m.id===session.memberId):null;
-  return(<div style={{minHeight:'100vh',background:B.bg}}>{session.role==='admin'?<AdminApp data={data} persist={persist} showToast={showToast} logout={logout}/>:<MemberApp data={data} persist={persist} showToast={showToast} logout={logout} me={me}/>}<Toast t={toast}/></div>);
+  return(<div style={{minHeight:'100vh',background:B.bg}}>{session.role==='admin'?<AdminApp data={data} persist={persist} showToast={showToast} logout={logout}/>:<MemberApp data={data} persist={persist} showToast={showToast} logout={logout} me={me} addMemberPayment={(p)=>{persist({...data,memberPayments:[{id:uid(),...p,createdAt:new Date().toISOString()},...(data.memberPayments||[])]});}}/>}<Toast t={toast}/></div>);
 }
 
 // ─── ADMIN APP SHELL ──────────────────────────────────────
@@ -310,9 +311,14 @@ function AdminApp({data,persist,showToast,logout}){
     {id:'invoices',l:'الفواتير',ic:'invoice'},
     {id:'reports',l:'تقارير',ic:'chart'},
     {id:'team',l:'الفريق',ic:'users'},
+    {id:'settings',l:'⚙️ إعدادات',ic:'lock'},
   ];
 
-  const addService=s=>{persist({...data,services:[{id:uid(),...s,createdAt:new Date().toISOString()},...(data.services||[])]});showToast('تم الإضافة ✅');};
+  const addMemberPayment=p=>{persist({...data,memberPayments:[{id:uid(),...p,createdAt:new Date().toISOString()},...(data.memberPayments||[])]});};
+  const updMemberPayment=(id,patch)=>persist({...data,memberPayments:(data.memberPayments||[]).map(p=>p.id===id?{...p,...patch}:p)});
+  const delMemberPayment=id=>persist({...data,memberPayments:(data.memberPayments||[]).filter(p=>p.id!==id)});
+  const changeAdminPw=(newPw)=>{persist({...data,adminPassword:hash(newPw)});showToast('تم تغيير كلمة السر ✅');};
+  const changeMemberPw=(id,newPw)=>{persist({...data,members:data.members.map(m=>m.id===id?{...m,password:hash(newPw)}:m)});showToast('تم تغيير كلمة السر ✅');};
   const updService=(id,p)=>persist({...data,services:(data.services||[]).map(s=>s.id===id?{...s,...p}:s)});
   const delService=id=>{if(!confirm('متأكد؟'))return;persist({...data,services:(data.services||[]).filter(s=>s.id!==id)});showToast('تم الحذف');};
 
@@ -320,6 +326,7 @@ function AdminApp({data,persist,showToast,logout}){
     return <TaskBoard client={selClient} data={data} onBack={()=>setSelClient(null)}
       addTask={addTask} updTask={updTask} delTask={delTask} addComment={addComment}
       approveTask={approveTask} rejectTask={rejectTask} requestMoveTask={requestMoveTask}
+      addMemberPayment={addMemberPayment}
       showToast={showToast} isAdmin={true} logout={logout} me={null}/>;
   }
 
@@ -356,7 +363,8 @@ function AdminApp({data,persist,showToast,logout}){
         {mod==='services'&&<ServiceModule data={data} addService={addService} updService={updService} delService={delService}/>}
         {mod==='invoices'&&<InvoicesModule data={data} addInvoice={addInvoice} updInvoice={updInvoice} delInvoice={delInvoice} addExpense={addExpense} delExpense={delExpense}/>}
         {mod==='reports'&&<ReportsModule data={data}/>}
-        {mod==='team'&&<TeamModule data={data} addMember={addMember} updMember={updMember} delMember={delMember}/>}
+        {mod==='team'&&<TeamModule data={data} addMember={addMember} updMember={updMember} delMember={delMember} payments={data.memberPayments||[]} updPayment={updMemberPayment} delPayment={delMemberPayment}/>}
+        {mod==='settings'&&<SettingsModule data={data} changeAdminPw={changeAdminPw} changeMemberPw={changeMemberPw}/>}
       </div>
     </div>
   );
@@ -1546,9 +1554,10 @@ function ReportsModule({data}){
 }
 
 // ─── TEAM MODULE ──────────────────────────────────────────
-function TeamModule({data,addMember,updMember,delMember}){
+function TeamModule({data,addMember,updMember,delMember,payments=[],updPayment,delPayment}){
   const[showForm,setShowForm]=useState(false);const[editing,setEditing]=useState(null);
   const[name,setName]=useState('');const[role,setRole]=useState('editor');const[pw,setPw]=useState('');const[color,setColor]=useState(COLORS[0]);const[err,setErr]=useState('');
+  const[tab,setTab]=useState('members');
   const save=()=>{
     if(!name.trim())return setErr('دخل الاسم');
     if(!editing&&pw.length<4)return setErr('4 حروف على الأقل');
@@ -1557,40 +1566,85 @@ function TeamModule({data,addMember,updMember,delMember}){
     else addMember(name.trim(),role,pw,color);
     setShowForm(false);setEditing(null);setName('');setPw('');setErr('');
   };
+  const pendingPayments=payments.filter(p=>p.status==='pending');
+  const totalOwed=pendingPayments.reduce((s,p)=>s+Number(p.amount),0);
   return(<div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>الفريق ({data.members.length})</h2>
+      <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>الفريق</h2>
       <button onClick={()=>{setEditing(null);setName('');setRole('editor');setPw('');setColor(COLORS[0]);setShowForm(true);}} style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
         <Ic n="plus" size={16} color="white"/> زيد عضو
       </button>
     </div>
-    <div style={{padding:'0.75rem 1rem',background:B.soft,border:`1px solid ${B.accent}33`,borderRadius:'0.875rem',fontSize:'0.8rem',color:B.accent}}>
-      💡 كل عضو يدخل باسمه + كلمة سرو — يشوف غير مهامه هو
+    <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'0.875rem',border:`1px solid ${B.border}`,width:'fit-content'}}>
+      {[{v:'members',l:`الأعضاء (${data.members.length})`},{v:'payments',l:`💰 المستحقات${totalOwed>0?' — '+fmt(totalOwed)+' دج':''}`}].map(t=>(
+        <button key={t.v} onClick={()=>setTab(t.v)} style={{padding:'0.4rem 0.875rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.82rem',background:tab===t.v?B.accent:'transparent',color:tab===t.v?'white':B.muted,transition:'all 0.15s'}}>{t.l}</button>
+      ))}
     </div>
-    {data.members.length===0?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش أعضاء</div>
-    :<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
-      {data.members.map((m,i)=>{
-        const tc=data.tasks.filter(t=>t.stage!=='done'&&(t.assignees||[]).includes(m.id)).length;
-        const done=data.tasks.filter(t=>t.stage==='done'&&(t.assignees||[]).includes(m.id)).length;
-        return(<div key={m.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<data.members.length-1?`1px solid ${B.border}`:'none'}}>
-          <Av name={m.name} color={m.color} size={40} fs={13}/>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:'700',color:B.text}}>{m.name}</div>
-            <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem'}}>
-              <span>{ROLES.find(r=>r.id===m.role)?.l}</span>
-              <span>·</span>
-              <span style={{color:tc>0?B.warning:B.muted}}>{tc} نشطة</span>
-              <span>·</span>
-              <span style={{color:B.success}}>{done} مكتملة</span>
+    {tab==='members'&&(<>
+      <div style={{padding:'0.75rem 1rem',background:B.soft,border:`1px solid ${B.accent}33`,borderRadius:'0.875rem',fontSize:'0.8rem',color:B.accent}}>
+        💡 كل عضو يدخل باسمه + كلمة سرو — يشوف غير مهامه هو
+      </div>
+      {data.members.length===0?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted}}>ما كاينش أعضاء</div>
+      :<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+        {data.members.map((m,i)=>{
+          const tc=data.tasks.filter(t=>t.stage!=='done'&&t.stage!=='post'&&(t.assignees||[]).includes(m.id)).length;
+          const done=data.tasks.filter(t=>(t.stage==='done'||t.stage==='post')&&(t.assignees||[]).includes(m.id)).length;
+          const owed=pendingPayments.filter(p=>p.memberId===m.id).reduce((s,p)=>s+Number(p.amount),0);
+          return(<div key={m.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<data.members.length-1?`1px solid ${B.border}`:'none'}}>
+            <Av name={m.name} color={m.color} size={40} fs={13}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:'700',color:B.text}}>{m.name}</div>
+              <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                <span>{ROLES.find(r=>r.id===m.role)?.l}</span>
+                <span>·</span><span style={{color:tc>0?B.warning:B.muted}}>{tc} نشطة</span>
+                <span>·</span><span style={{color:B.success}}>{done} مكتملة</span>
+                {owed>0&&<><span>·</span><span style={{color:B.danger,fontWeight:'700'}}>💰 {fmt(owed)} دج</span></>}
+              </div>
             </div>
-          </div>
-          <div style={{display:'flex',gap:'0.25rem'}}>
-            <button onClick={()=>{setEditing(m);setName(m.name);setRole(m.role);setColor(m.color);setPw('');setShowForm(true);}} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="pencil" size={15}/></button>
-            <button onClick={()=>delMember(m.id)} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={15} color={B.danger}/></button>
-          </div>
-        </div>);
-      })}
-    </div>}
+            <div style={{display:'flex',gap:'0.25rem'}}>
+              <button onClick={()=>{setEditing(m);setName(m.name);setRole(m.role);setColor(m.color);setPw('');setShowForm(true);}} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="pencil" size={15}/></button>
+              <button onClick={()=>delMember(m.id)} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={15} color={B.danger}/></button>
+            </div>
+          </div>);
+        })}
+      </div>}
+    </>)}
+    {tab==='payments'&&(
+      <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+        {pendingPayments.length===0
+          ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش مستحقات دروك ✅</div>
+          :data.members.map(m=>{
+            const mPay=payments.filter(p=>p.memberId===m.id);
+            const mOwed=pendingPayments.filter(p=>p.memberId===m.id).reduce((s,p)=>s+Number(p.amount),0);
+            if(mPay.length===0)return null;
+            return(<div key={m.id} style={{background:B.card,border:`1px solid ${mOwed>0?B.warning+'44':B.border}`,borderRadius:'1rem',padding:'1rem',borderRight:`4px solid ${mOwed>0?B.warning:B.success}`}}>
+              <div style={{display:'flex',alignItems:'center',gap:'0.75rem',marginBottom:'0.625rem'}}>
+                <Av name={m.name} color={m.color} size={36} fs={12}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:'700',color:B.text}}>{m.name}</div>
+                  {mOwed>0&&<div style={{fontSize:'0.75rem',color:B.warning,fontWeight:'700'}}>💰 مستحق: {fmt(mOwed)} دج</div>}
+                </div>
+                {mOwed>0&&<button onClick={()=>mPay.filter(p=>p.status==='pending').forEach(p=>updPayment(p.id,{status:'paid'}))}
+                  style={{padding:'0.4rem 0.875rem',borderRadius:'0.75rem',border:'none',background:B.success,color:'white',cursor:'pointer',fontWeight:'700',fontSize:'0.78rem'}}>✓ خلص الكل</button>}
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:'0.375rem'}}>
+                {mPay.map(p=>{const paid=p.status==='paid';return(
+                  <div key={p.id} style={{display:'flex',alignItems:'center',gap:'0.5rem',padding:'0.5rem 0.625rem',background:B.inputBg,borderRadius:'0.625rem',opacity:paid?0.6:1}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:'0.8rem',fontWeight:'600',color:B.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.taskTitle}</div>
+                      <div style={{fontSize:'0.68rem',color:B.muted}}>{p.note||''} · {fmtD(p.createdAt)}</div>
+                    </div>
+                    <span style={{fontWeight:'700',color:paid?B.success:B.warning,fontVariantNumeric:'tabular-nums'}}>{fmt(p.amount)} دج</span>
+                    {!paid&&<button onClick={()=>updPayment(p.id,{status:'paid'})} style={{padding:'2px 7px',borderRadius:'6px',border:`1px solid ${B.success}44`,background:`${B.success}10`,color:B.success,cursor:'pointer',fontSize:'0.7rem',fontWeight:'700'}}>✓</button>}
+                    <button onClick={()=>delPayment(p.id)} style={{padding:'0.25rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={12} color={B.danger}/></button>
+                  </div>
+                );})}
+              </div>
+            </div>);
+          })
+        }
+      </div>
+    )}
     {showForm&&(<Modal onClose={()=>setShowForm(false)} title={editing?'تعديل':'عضو جديد'}>
       <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
         <Field label="الاسم"><input value={name} onChange={e=>setName(e.target.value)} placeholder="اسم العضو" style={INP} autoFocus/></Field>
@@ -1601,6 +1655,62 @@ function TeamModule({data,addMember,updMember,delMember}){
         <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>{editing?'حفظ':'زيد'}</button>
       </div>
     </Modal>)}
+  </div>);
+}
+
+// ─── SETTINGS MODULE ──────────────────────────────────────
+function SettingsModule({data,changeAdminPw,changeMemberPw}){
+  const[adminPw,setAdminPw]=useState('');const[adminPw2,setAdminPw2]=useState('');
+  const[adminErr,setAdminErr]=useState('');
+  const[selMember,setSelMember]=useState(data.members[0]?.id||'');
+  const[memPw,setMemPw]=useState('');const[memPw2,setMemPw2]=useState('');
+  const[memErr,setMemErr]=useState('');
+
+  const saveAdmin=()=>{
+    if(adminPw.length<4)return setAdminErr('4 حروف على الأقل');
+    if(adminPw!==adminPw2)return setAdminErr('ما تتطابقاش');
+    changeAdminPw(adminPw);setAdminPw('');setAdminPw2('');setAdminErr('');
+  };
+  const saveMember=()=>{
+    if(!selMember)return setMemErr('اختار عضو');
+    if(memPw.length<4)return setMemErr('4 حروف على الأقل');
+    if(memPw!==memPw2)return setMemErr('ما تتطابقاش');
+    changeMemberPw(selMember,memPw);setMemPw('');setMemPw2('');setMemErr('');
+  };
+
+  return(<div style={{display:'flex',flexDirection:'column',gap:'1.5rem'}}>
+    <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>⚙️ الإعدادات</h2>
+
+    {/* Admin password */}
+    <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'1.25rem'}}>
+      <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:'0.5rem'}}>
+        <Ic n="shield" size={18} color={B.accent}/> تغيير كلمة سر الأدمين
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+        <Field label="كلمة السر الجديدة"><PwInput value={adminPw} onChange={setAdminPw} placeholder="4 حروف على الأقل"/></Field>
+        <Field label="تأكيد كلمة السر"><PwInput value={adminPw2} onChange={setAdminPw2} placeholder="أعد كلمة السر" onEnter={saveAdmin}/></Field>
+        {adminErr&&<div style={{fontSize:'0.75rem',color:B.danger,fontWeight:'700'}}>{adminErr}</div>}
+        <button onClick={saveAdmin} style={{padding:'0.75rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>حفظ كلمة السر</button>
+      </div>
+    </div>
+
+    {/* Member password */}
+    {data.members.length>0&&<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'1.25rem'}}>
+      <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'1rem',display:'flex',alignItems:'center',gap:'0.5rem'}}>
+        <Ic n="users" size={18} color={B.info}/> تغيير كلمة سر عضو
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+        <Field label="العضو">
+          <select value={selMember} onChange={e=>setSelMember(e.target.value)} style={INP}>
+            {data.members.map(m=><option key={m.id} value={m.id}>{m.name} — {ROLES.find(r=>r.id===m.role)?.l}</option>)}
+          </select>
+        </Field>
+        <Field label="كلمة السر الجديدة"><PwInput value={memPw} onChange={setMemPw} placeholder="4 حروف على الأقل"/></Field>
+        <Field label="تأكيد كلمة السر"><PwInput value={memPw2} onChange={setMemPw2} placeholder="أعد كلمة السر" onEnter={saveMember}/></Field>
+        {memErr&&<div style={{fontSize:'0.75rem',color:B.danger,fontWeight:'700'}}>{memErr}</div>}
+        <button onClick={saveMember} style={{padding:'0.75rem',borderRadius:'0.75rem',background:B.info,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>حفظ كلمة السر</button>
+      </div>
+    </div>}
   </div>);
 }
 
@@ -1970,7 +2080,7 @@ function TaskDetail({task,data,onClose,onUpdate,onDelete,onMove,onAddComment,isA
   </Modal>);
 }
 
-// ─── ROLE → STAGE MAPPING ─────────────────────────────────
+// ─── ROLE MAPPINGS ────────────────────────────────────────
 const ROLE_PRIMARY_STAGE={
   scriptwriter:'script',
   photographer:'shoot',
@@ -1988,77 +2098,74 @@ const ROLE_COLOR={
   other:'#888',
 };
 
-// ─── MEMBER APP ───────────────────────────────────────────
-function MemberApp({data,persist,showToast,logout,me}){
+function MemberApp({data,persist,showToast,logout,me,addMemberPayment}){
   const myRole=me?.role||'other';
   const primaryStage=ROLE_PRIMARY_STAGE[myRole];
   const roleColor=ROLE_COLOR[myRole]||B.accent;
+  const pStage=TASK_STAGES.find(s=>s.id===primaryStage);
+  const roleLabel=ROLES.find(r=>r.id===myRole)?.l||myRole;
 
-  // Filter: 'mine' (primary stage), 'all_active', 'done'
-  const[filter,setFilter]=useState('mine');
   const[selTask,setSelTask]=useState(null);
   const[selClient,setSelClient]=useState(null);
+  const[showDone,setShowDone]=useState(false);
+  const[payModal,setPayModal]=useState(null);
+  const[payAmt,setPayAmt]=useState('');
+  const[payNote,setPayNote]=useState('');
 
-  // All tasks assigned to me
   const myTasks=useMemo(()=>data.tasks.filter(t=>(t.assignees||[]).includes(me?.id)),[data.tasks,me]);
-
-  // Filtered tasks based on filter and role
-  const filtered=useMemo(()=>{
-    let t=myTasks;
-    if(filter==='mine'&&primaryStage){
-      // Only show tasks in my primary stage (or pending approval from my stage)
-      t=t.filter(x=>x.stage===primaryStage||(x.pendingStage&&x.stage===primaryStage));
-    } else if(filter==='all_active'){
-      t=t.filter(x=>x.stage!=='done');
-    } else if(filter==='done'){
-      t=t.filter(x=>x.stage==='done');
-    }
+  const stageTasks=useMemo(()=>{
+    let t=primaryStage
+      ?myTasks.filter(x=>x.stage===primaryStage)
+      :myTasks.filter(x=>x.stage!=='done'&&x.stage!=='post');
     if(selClient)t=t.filter(x=>x.clientId===selClient);
     return t;
-  },[myTasks,filter,primaryStage,selClient]);
+  },[myTasks,primaryStage,selClient]);
+  const doneTasks=useMemo(()=>{
+    let t=myTasks.filter(x=>x.stage==='done'||x.stage==='post');
+    if(selClient)t=t.filter(x=>x.clientId===selClient);
+    return t;
+  },[myTasks,selClient]);
+
+  const myPayments=(data.memberPayments||[]).filter(p=>p.memberId===me?.id);
+  const totalEarned=myPayments.filter(p=>p.status==='paid').reduce((s,p)=>s+Number(p.amount),0);
+  const totalPending=myPayments.filter(p=>p.status==='pending').reduce((s,p)=>s+Number(p.amount),0);
+  const overdue=myTasks.filter(t=>t.stage!=='done'&&t.stage!=='post'&&isOverdue(t.dueDate)).length;
 
   const addComment=(taskId,memberId,memberName,content,type='comment')=>{
     const c={id:uid(),taskId,memberId,memberName,content,type,createdAt:new Date().toISOString()};
     persist({...data,comments:[...data.comments,c]});
   };
   const updTask=(id,patch,msg)=>{
-    const activity=[{id:uid(),action:'update_task',detail:msg||`${me?.name} عدل`,memberId:me?.id,memberName:me?.name,createdAt:new Date().toISOString()},...(data.activity||[]).slice(0,199)];
+    const activity=[{id:uid(),action:'update_task',detail:msg||me?.name,memberId:me?.id,memberName:me?.name,createdAt:new Date().toISOString()},...(data.activity||[]).slice(0,199)];
     persist({...data,tasks:data.tasks.map(t=>t.id===id?{...t,...patch}:t),activity});
   };
-
-  // Member requests move — waits for admin approval
-  const moveTask=(id,newStage)=>{
-    const t=data.tasks.find(x=>x.id===id);
-    const stageName=TASK_STAGES.find(s=>s.id===newStage)?.label;
-    const c={id:uid(),taskId:id,memberId:me?.id,memberName:me?.name,content:`🟡 انتهيت — في انتظار موافقة الأدمين للانتقال لـ ${stageName}`,createdAt:new Date().toISOString()};
-    const activity=[{id:uid(),action:'request_move',detail:`${me?.name} طلب: ${t?.title} → ${stageName}`,memberId:me?.id,memberName:me?.name,createdAt:new Date().toISOString()},...(data.activity||[]).slice(0,199)];
-    persist({...data,tasks:data.tasks.map(x=>x.id===id?{...x,pendingStage:newStage}:x),comments:[...data.comments,c],activity});
-    showToast(`🟡 طلبك أُرسل للأدمين`,'warning');
+  const requestMove=(taskId,nextStage)=>{
+    const t=data.tasks.find(x=>x.id===taskId);
+    setPayModal({taskId,taskTitle:t?.title||'',nextStage});
+    setPayAmt('');setPayNote('');
+  };
+  const confirmDone=()=>{
+    if(!payModal)return;
+    const{taskId,taskTitle,nextStage}=payModal;
+    const stageName=TASK_STAGES.find(s=>s.id===nextStage)?.label;
+    if(payAmt&&Number(payAmt)>0){
+      addMemberPayment({taskId,taskTitle,memberId:me?.id,memberName:me?.name,amount:Number(payAmt),note:payNote,status:'pending'});
+    }
+    const c={id:uid(),taskId,memberId:me?.id,memberName:me?.name,content:`🟡 انتهيت — في انتظار موافقة الأدمين → ${stageName}${payAmt?` · ${fmt(Number(payAmt))} دج`:''}`,createdAt:new Date().toISOString(),type:'comment'};
+    const activity=[{id:uid(),action:'request_move',detail:`${me?.name}: ${taskTitle} → ${stageName}`,memberId:me?.id,memberName:me?.name,createdAt:new Date().toISOString()},...(data.activity||[]).slice(0,199)];
+    persist({...data,tasks:data.tasks.map(x=>x.id===taskId?{...x,pendingStage:nextStage}:x),comments:[...data.comments,c],activity});
+    setPayModal(null);
+    showToast('🟡 طلبك أُرسل للأدمين','warning');
   };
 
   const freshTask=selTask?data.tasks.find(t=>t.id===selTask.id):null;
-  const overdue=myTasks.filter(t=>t.stage!=='done'&&isOverdue(t.dueDate)).length;
-  const active=myTasks.filter(t=>t.stage!=='done').length;
-  const done=myTasks.filter(t=>t.stage==='done').length;
-  const primaryCount=primaryStage?myTasks.filter(t=>t.stage===primaryStage).length:0;
-  const pStage=TASK_STAGES.find(s=>s.id===primaryStage);
-  const roleLabel=ROLES.find(r=>r.id===myRole)?.l||myRole;
-
-  const FILTERS=primaryStage
-    ?[{v:'mine',l:`${pStage?.icon||''} مهامي`,sub:primaryCount},{v:'all_active',l:'الكل النشطة',sub:active},{v:'done',l:'مكتملة',sub:done}]
-    :[{v:'all_active',l:'النشطة',sub:active},{v:'done',l:'مكتملة',sub:done}];
-
-  // init filter if no primaryStage
-  useEffect(()=>{if(!primaryStage&&filter==='mine')setFilter('all_active');},[primaryStage]);
+  const displayTasks=showDone?doneTasks:stageTasks;
 
   return(
     <div style={{fontFamily:"'Cairo',sans-serif",minHeight:'100vh',background:B.bg}}>
-
-      {/* Header */}
       <div style={{background:B.nav,position:'sticky',top:0,zIndex:30,borderBottom:`1px solid ${_theme==='dark'?'#333':'#e4e4e7'}`}}>
         <div style={{maxWidth:'640px',margin:'0 auto',padding:'0 1rem',display:'flex',alignItems:'center',justifyContent:'space-between',height:'52px',gap:'0.75rem'}}>
           <div style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
-            {/* Role badge */}
             <div style={{width:36,height:36,background:roleColor,borderRadius:'10px',display:'grid',placeItems:'center',flexShrink:0,boxShadow:`0 4px 12px ${roleColor}44`}}>
               <span style={{fontSize:'1rem'}}>{pStage?.icon||'👤'}</span>
             </div>
@@ -2066,172 +2173,113 @@ function MemberApp({data,persist,showToast,logout,me}){
               <div style={{fontWeight:'800',color:'white',fontSize:'0.9rem',lineHeight:1}}>{me?.name}</div>
               <div style={{fontSize:'0.65rem',marginTop:'2px',display:'flex',gap:'0.4rem',alignItems:'center'}}>
                 <span style={{padding:'1px 6px',borderRadius:'9999px',background:roleColor,color:'white',fontWeight:'700',fontSize:'0.62rem'}}>{roleLabel}</span>
-                {overdue>0&&<span style={{color:B.danger,fontWeight:'700'}}>⚠️ {overdue} متأخرة</span>}
+                {overdue>0&&<span style={{color:B.danger,fontWeight:'700'}}>⚠️ {overdue}</span>}
               </div>
             </div>
           </div>
-          <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}>
-            <button onClick={toggleTheme} style={{background:'rgba(255,255,255,0.1)',border:'none',borderRadius:'9999px',padding:'0.35rem 0.5rem',cursor:'pointer',display:'flex',color:'rgba(255,255,255,0.7)'}}><Ic n={_theme==='dark'?'sun':'moon'} size={14} color="rgba(255,255,255,0.7)"/></button>
+          <div style={{display:'flex',gap:'0.5rem'}}>
+            <button onClick={toggleTheme} style={{background:'rgba(255,255,255,0.1)',border:'none',borderRadius:'9999px',padding:'0.35rem 0.5rem',cursor:'pointer',display:'flex'}}><Ic n={_theme==='dark'?'sun':'moon'} size={14} color="rgba(255,255,255,0.7)"/></button>
             <button onClick={logout} style={{padding:'0.35rem 0.625rem',borderRadius:'9999px',border:'1px solid rgba(255,255,255,0.2)',background:'transparent',color:'rgba(255,255,255,0.7)',cursor:'pointer',fontSize:'0.75rem',display:'flex',alignItems:'center',gap:'3px'}}><Ic n="logout" size={13} color="rgba(255,255,255,0.7)"/>خروج</button>
           </div>
         </div>
       </div>
 
-      <div style={{maxWidth:'640px',margin:'0 auto',padding:'1rem'}}>
+      <div style={{maxWidth:'640px',margin:'0 auto',padding:'1rem',display:'flex',flexDirection:'column',gap:'1rem'}}>
 
-        {/* Stats bar */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'0.625rem',marginBottom:'1rem'}}>
-          {[
-            {l:primaryStage?`${pStage?.label}`:' نشطة',v:primaryStage?primaryCount:active,c:roleColor,ic:pStage?.icon||'📋'},
-            {l:'متأخرة',v:overdue,c:B.danger,ic:'⚠️'},
-            {l:'مكتملة',v:done,c:B.success,ic:'✅'},
-          ].map((s,i)=>(
-            <div key={i} style={{background:B.card,border:`1px solid ${i===0?roleColor+'44':B.border}`,borderRadius:'1rem',padding:'0.875rem 0.75rem',textAlign:'center'}}>
-              <div style={{fontSize:'1.1rem',marginBottom:'3px'}}>{s.ic}</div>
-              <div style={{fontSize:'1.5rem',fontWeight:'900',color:s.c,fontVariantNumeric:'tabular-nums'}}>{s.v}</div>
-              <div style={{fontSize:'0.68rem',color:B.muted,marginTop:'2px'}}>{s.l}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Overdue alert */}
-        {overdue>0&&(
-          <div style={{background:`${B.danger}12`,border:`1px solid ${B.danger}33`,borderRadius:'1rem',padding:'0.875rem 1rem',marginBottom:'1rem',display:'flex',gap:'0.75rem',alignItems:'center'}}>
-            <span style={{fontSize:'1.5rem'}}>⚠️</span>
+        {/* Earnings card */}
+        <div style={{background:`linear-gradient(135deg,${roleColor},${roleColor}bb)`,borderRadius:'1.5rem',padding:'1.25rem',color:'white',boxShadow:`0 8px 24px ${roleColor}44`}}>
+          <div style={{fontSize:'0.78rem',opacity:0.85,marginBottom:'0.5rem',fontWeight:'600'}}>💰 حسابي الكلي</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem',marginBottom:myPayments.length>0?'0.875rem':'0'}}>
             <div>
-              <div style={{fontWeight:'700',color:B.danger,fontSize:'0.875rem'}}>عندك {overdue} مهمة متأخرة</div>
-              <div style={{fontSize:'0.75rem',color:B.muted}}>خبر الأدمين وتابعهم</div>
+              <div style={{fontSize:'2rem',fontWeight:'900',fontVariantNumeric:'tabular-nums',lineHeight:1}}>{fmt(totalEarned)}</div>
+              <div style={{fontSize:'0.72rem',opacity:0.8,marginTop:'2px'}}>دج مقبوضة ✅</div>
+            </div>
+            <div>
+              <div style={{fontSize:'2rem',fontWeight:'900',fontVariantNumeric:'tabular-nums',lineHeight:1,color:'rgba(255,255,255,0.7)'}}>{fmt(totalPending)}</div>
+              <div style={{fontSize:'0.72rem',opacity:0.7,marginTop:'2px'}}>دج في الانتظار 🟡</div>
             </div>
           </div>
-        )}
-
-        {/* Filter tabs */}
-        <div style={{display:'flex',gap:'0.375rem',marginBottom:'1rem',background:B.card,padding:'4px',borderRadius:'1rem',border:`1px solid ${B.border}`}}>
-          {FILTERS.map(f=>(
-            <button key={f.v} onClick={()=>setFilter(f.v)}
-              style={{flex:1,padding:'0.5rem 0.375rem',borderRadius:'0.75rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.8rem',background:filter===f.v?roleColor:'transparent',color:filter===f.v?'white':B.muted,transition:'all 0.2s',display:'flex',flexDirection:'column',alignItems:'center',gap:'2px'}}>
-              <span>{f.l}</span>
-              <span style={{fontSize:'0.65rem',opacity:0.8,fontWeight:'400'}}>{f.sub}</span>
-            </button>
-          ))}
+          {myPayments.length>0&&<div style={{fontSize:'0.72rem',opacity:0.75,borderTop:'1px solid rgba(255,255,255,0.2)',paddingTop:'0.625rem'}}>
+            {myPayments.length} مهمة مسجلة · {myPayments.filter(p=>p.status==='paid').length} مدفوعة · مجموع: {fmt(totalEarned+totalPending)} دج
+          </div>}
         </div>
 
-        {/* Client filter */}
-        {data.clients.length>1&&(
-          <div style={{marginBottom:'1rem'}}>
-            <div style={{display:'flex',gap:'0.375rem',overflowX:'auto',paddingBottom:'4px'}}>
-              <button onClick={()=>setSelClient(null)} style={{padding:'0.35rem 0.875rem',borderRadius:'9999px',border:`1px solid ${!selClient?roleColor:B.border}`,background:!selClient?`${roleColor}15`:'transparent',color:!selClient?roleColor:B.muted,cursor:'pointer',fontSize:'0.78rem',fontWeight:'700',whiteSpace:'nowrap'}}>
-                الكل
-              </button>
-              {data.clients.map(c=>(
-                <button key={c.id} onClick={()=>setSelClient(selClient===c.id?null:c.id)}
-                  style={{padding:'0.35rem 0.875rem',borderRadius:'9999px',border:`1px solid ${selClient===c.id?c.color:B.border}`,background:selClient===c.id?`${c.color}15`:'transparent',color:selClient===c.id?c.color:B.muted,cursor:'pointer',fontSize:'0.78rem',fontWeight:'700',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:'4px'}}>
-                  <div style={{width:6,height:6,borderRadius:'50%',background:c.color,flexShrink:0}}/>
-                  {c.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {overdue>0&&<div style={{background:`${B.danger}12`,border:`1px solid ${B.danger}33`,borderRadius:'1rem',padding:'0.875rem',display:'flex',gap:'0.75rem',alignItems:'center'}}>
+          <span>⚠️</span><div><div style={{fontWeight:'700',color:B.danger,fontSize:'0.875rem'}}>{overdue} مهمة متأخرة</div><div style={{fontSize:'0.75rem',color:B.muted}}>خبر الأدمين</div></div>
+        </div>}
 
-        {/* Task list */}
-        {filtered.length===0?(
-          <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'3rem 1.5rem',textAlign:'center'}}>
-            <div style={{fontSize:'2.5rem',marginBottom:'0.75rem'}}>{filter==='done'?'📭':'🎉'}</div>
-            <div style={{fontWeight:'700',color:B.text,fontSize:'1rem',marginBottom:'0.25rem'}}>
-              {filter==='mine'?`ما كاينش مهام ${pStage?.label||''} دروك`:filter==='done'?'ما كاينش مهام مكتملة بعد':'🎉 كل مهامك النشطة خلاصات!'}
-            </div>
-            <div style={{fontSize:'0.8rem',color:B.muted}}>
-              {filter==='mine'&&active>0?`عندك ${active} مهمة في مراحل أخرى`:''}
-            </div>
+        {/* Tabs */}
+        <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'1rem',border:`1px solid ${B.border}`}}>
+          <button onClick={()=>setShowDone(false)} style={{flex:1,padding:'0.55rem',borderRadius:'0.75rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:!showDone?roleColor:'transparent',color:!showDone?'white':B.muted,transition:'all 0.15s',display:'flex',flexDirection:'column',alignItems:'center',gap:'1px'}}>
+            <span>{primaryStage?`${pStage?.icon} ${pStage?.label}`:'مهامي'}</span>
+            <span style={{fontSize:'0.65rem',opacity:!showDone?0.85:0.6,fontWeight:'400'}}>{stageTasks.length} مهمة</span>
+          </button>
+          <button onClick={()=>setShowDone(true)} style={{flex:1,padding:'0.55rem',borderRadius:'0.75rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:showDone?roleColor:'transparent',color:showDone?'white':B.muted,transition:'all 0.15s',display:'flex',flexDirection:'column',alignItems:'center',gap:'1px'}}>
+            <span>✅ المنجزة</span>
+            <span style={{fontSize:'0.65rem',opacity:showDone?0.85:0.6,fontWeight:'400'}}>{doneTasks.length} مهمة</span>
+          </button>
+        </div>
+
+        {data.clients.length>1&&<div style={{display:'flex',gap:'0.375rem',overflowX:'auto',paddingBottom:'2px'}}>
+          <button onClick={()=>setSelClient(null)} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${!selClient?roleColor:B.border}`,background:!selClient?`${roleColor}15`:'transparent',color:!selClient?roleColor:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>الكل</button>
+          {data.clients.map(c=>(<button key={c.id} onClick={()=>setSelClient(selClient===c.id?null:c.id)} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${selClient===c.id?c.color:B.border}`,background:selClient===c.id?`${c.color}15`:'transparent',color:selClient===c.id?c.color:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:'4px'}}>
+            <div style={{width:6,height:6,borderRadius:'50%',background:c.color}}/>{c.name}
+          </button>))}
+        </div>}
+
+        {displayTasks.length===0
+          ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'3rem',textAlign:'center'}}>
+            <div style={{fontSize:'2.5rem',marginBottom:'0.75rem'}}>{showDone?'📭':'🎉'}</div>
+            <div style={{fontWeight:'700',color:B.text}}>{showDone?'ما كاينش مهام منجزة بعد':'ما كاينش مهام دروك!'}</div>
           </div>
-        ):(
-          <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
-            {filtered.map(task=>{
+          :<div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+            {displayTasks.map(task=>{
               const cl=data.clients.find(c=>c.id===task.clientId);
               const ct=CTYPES.find(c=>c.id===task.contentType);
               const stageInfo=TASK_STAGES.find(s=>s.id===task.stage);
               const cc=data.comments.filter(c=>c.taskId===task.id).length;
-              const od=isOverdue(task.dueDate);
-              const td=isToday(task.dueDate);
+              const od=isOverdue(task.dueDate);const td=isToday(task.dueDate);
               const si=TASK_STAGES.findIndex(s=>s.id===task.stage);
               const next=si<TASK_STAGES.length-1?TASK_STAGES[si+1]:null;
               const isPending=!!task.pendingStage;
-
+              const isDone=task.stage==='done'||task.stage==='post';
+              const taskPay=myPayments.find(p=>p.taskId===task.id);
               return(
-                <div key={task.id}
-                  style={{background:B.card,borderRadius:'1.25rem',border:`1px solid ${od&&!isPending?B.danger+'55':isPending?B.warning+'55':B.border}`,overflow:'hidden',transition:'box-shadow 0.2s'}}
-                  onMouseEnter={e=>e.currentTarget.style.boxShadow=`0 4px 16px rgba(0,0,0,0.1)`}
-                  onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
-
-                  {/* Stage indicator strip */}
+                <div key={task.id} style={{background:B.card,borderRadius:'1.25rem',border:`1px solid ${od&&!isPending?B.danger+'55':isPending?B.warning+'55':B.border}`,overflow:'hidden'}}>
                   <div style={{height:'3px',background:isPending?B.warning:stageInfo?.color||B.border}}/>
-
                   <div style={{padding:'1rem'}}>
-                    {/* Header */}
-                    <div style={{display:'flex',alignItems:'flex-start',gap:'0.625rem',marginBottom:'0.625rem'}}>
+                    <div style={{display:'flex',alignItems:'flex-start',gap:'0.625rem',marginBottom:'0.5rem'}}>
                       <div style={{flex:1,minWidth:0}}>
-                        <div onClick={()=>setSelTask(task)} style={{fontWeight:'800',color:B.text,fontSize:'0.95rem',lineHeight:1.4,cursor:'pointer',marginBottom:'4px'}}>
-                          {task.title}
-                        </div>
-                        {/* Client + stage */}
+                        <div onClick={()=>setSelTask(task)} style={{fontWeight:'800',color:B.text,fontSize:'0.95rem',lineHeight:1.4,cursor:'pointer',marginBottom:'3px'}}>{task.title}</div>
                         <div style={{display:'flex',gap:'0.375rem',alignItems:'center',flexWrap:'wrap'}}>
-                          {cl&&<div style={{display:'flex',alignItems:'center',gap:'3px'}}>
-                            <div style={{width:6,height:6,borderRadius:'50%',background:cl.color||B.accent,flexShrink:0}}/>
-                            <span style={{fontSize:'0.75rem',fontWeight:'700',color:cl.color||B.accent}}>{cl.name}</span>
-                          </div>}
-                          {filter!=='mine'&&stageInfo&&<span style={{fontSize:'0.68rem',padding:'1px 6px',borderRadius:'9999px',background:`${stageInfo.color}15`,color:stageInfo.color,fontWeight:'700'}}>{stageInfo.icon} {stageInfo.label}</span>}
+                          {cl&&<div style={{display:'flex',alignItems:'center',gap:'3px'}}><div style={{width:6,height:6,borderRadius:'50%',background:cl.color||B.accent}}/><span style={{fontSize:'0.75rem',fontWeight:'700',color:cl.color||B.accent}}>{cl.name}</span></div>}
+                          {showDone&&stageInfo&&<span style={{fontSize:'0.68rem',padding:'1px 6px',borderRadius:'9999px',background:`${stageInfo.color}15`,color:stageInfo.color,fontWeight:'700'}}>{stageInfo.icon} {stageInfo.label}</span>}
                           {ct&&<span style={{fontSize:'0.72rem',color:B.muted}}>{ct.i}</span>}
                         </div>
                       </div>
-                      {/* Comment count */}
-                      {cc>0&&<div style={{display:'flex',alignItems:'center',gap:'3px',padding:'3px 7px',background:B.inputBg,borderRadius:'9999px',flexShrink:0}}>
-                        <Ic n="message" size={12}/>
-                        <span style={{fontSize:'0.68rem',fontWeight:'700',color:B.muted}}>{cc}</span>
-                      </div>}
+                      {cc>0&&<div style={{display:'flex',alignItems:'center',gap:'3px',padding:'3px 7px',background:B.inputBg,borderRadius:'9999px',flexShrink:0}}><Ic n="message" size={12}/><span style={{fontSize:'0.68rem',fontWeight:'700',color:B.muted}}>{cc}</span></div>}
                     </div>
-
-                    {/* Dates + description */}
-                    {task.description&&<div style={{fontSize:'0.78rem',color:B.muted,marginBottom:'0.5rem',lineHeight:1.5,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>{task.description}</div>}
-
-                    <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap',marginBottom:'0.625rem'}}>
-                      {task.shootDate&&<div style={{fontSize:'0.72rem',color:B.info,background:`${B.info}12`,padding:'3px 8px',borderRadius:'9999px',display:'flex',alignItems:'center',gap:'3px'}}>
-                        📷 {fmtD(task.shootDate)}
-                      </div>}
-                      {task.dueDate&&<div style={{fontSize:'0.72rem',color:od?B.danger:td?B.warning:B.muted,background:`${od?B.danger:td?B.warning:B.border}15`,padding:'3px 8px',borderRadius:'9999px',fontWeight:od||td?'700':'400',display:'flex',alignItems:'center',gap:'3px'}}>
-                        📅 {od?'⚠️ متأخر':td?'اليوم':fmtD(task.dueDate)}
-                      </div>}
-                      {task.link&&<a href={task.link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:'0.72rem',color:B.info,background:`${B.info}12`,padding:'3px 8px',borderRadius:'9999px',textDecoration:'none',display:'flex',alignItems:'center',gap:'3px'}}>🔗 رابط ↗</a>}
+                    <div style={{display:'flex',gap:'0.375rem',flexWrap:'wrap',marginBottom:'0.5rem'}}>
+                      {task.shootDate&&<div style={{fontSize:'0.72rem',color:B.info,background:`${B.info}12`,padding:'3px 8px',borderRadius:'9999px'}}>📷 {fmtD(task.shootDate)}</div>}
+                      {task.dueDate&&<div style={{fontSize:'0.72rem',color:od?B.danger:td?B.warning:B.muted,background:`${od?B.danger:td?B.warning:B.border}15`,padding:'3px 8px',borderRadius:'9999px',fontWeight:od||td?'700':'400'}}>📅 {od?'⚠️ متأخر':td?'اليوم':fmtD(task.dueDate)}</div>}
+                      {task.link&&<a href={task.link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:'0.72rem',color:B.info,background:`${B.info}12`,padding:'3px 8px',borderRadius:'9999px',textDecoration:'none'}}>🔗 ↗</a>}
                     </div>
-
-                    {/* Quick note + action buttons */}
+                    {taskPay&&<div style={{fontSize:'0.75rem',padding:'4px 10px',borderRadius:'9999px',background:taskPay.status==='paid'?`${B.success}15`:`${B.warning}15`,color:taskPay.status==='paid'?B.success:B.warning,fontWeight:'700',display:'inline-block',marginBottom:'0.5rem'}}>
+                      💰 {fmt(taskPay.amount)} دج — {taskPay.status==='paid'?'مدفوعة ✅':'في الانتظار 🟡'}
+                    </div>}
                     <div style={{display:'flex',flexDirection:'column',gap:'0.375rem'}}>
-                      {isPending?(
-                        <div style={{padding:'0.625rem 0.875rem',borderRadius:'0.875rem',background:`${B.warning}12`,border:`1px solid ${B.warning}33`,display:'flex',alignItems:'center',gap:'0.5rem',justifyContent:'center'}}>
-                          <span style={{fontSize:'0.875rem'}}>🟡</span>
-                          <div>
-                            <div style={{fontSize:'0.78rem',fontWeight:'700',color:B.warning}}>في انتظار موافقة الأدمين</div>
-                            <div style={{fontSize:'0.65rem',color:B.muted}}>→ {TASK_STAGES.find(s=>s.id===task.pendingStage)?.label}</div>
-                          </div>
+                      {isPending
+                        ?<div style={{padding:'0.625rem 0.875rem',borderRadius:'0.875rem',background:`${B.warning}12`,border:`1px solid ${B.warning}33`,display:'flex',alignItems:'center',gap:'0.5rem',justifyContent:'center'}}>
+                          <span>🟡</span><div><div style={{fontSize:'0.78rem',fontWeight:'700',color:B.warning}}>في انتظار موافقة الأدمين</div><div style={{fontSize:'0.65rem',color:B.muted}}>→ {TASK_STAGES.find(s=>s.id===task.pendingStage)?.label}</div></div>
                         </div>
-                      ):next&&task.stage!=='done'?(
-                        <button onClick={()=>moveTask(task.id,next.id)}
-                          style={{width:'100%',padding:'0.75rem',borderRadius:'0.875rem',border:'none',cursor:'pointer',fontWeight:'800',fontSize:'0.875rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem',background:`linear-gradient(135deg,${next.color},${next.color}cc)`,color:'white',boxShadow:`0 4px 12px ${next.color}44`}}>
-                          ✓ انتهيت — أرسل للموافقة
-                          <span style={{opacity:0.8,fontSize:'0.75rem'}}>→ {next.label}</span>
-                        </button>
-                      ):task.stage==='done'?(
-                        <div style={{padding:'0.5rem',borderRadius:'0.75rem',background:`${B.success}10`,border:`1px solid ${B.success}22`,textAlign:'center',fontSize:'0.78rem',color:B.success,fontWeight:'700'}}>✅ مكتملة</div>
-                      ):null}
-
-                      {/* Quick note button */}
-                      <button onClick={e=>{e.stopPropagation();setSelTask(task);setTimeout(()=>{
-                        // auto-select note tab when opening
-                        document.querySelector('[data-notebtn]')?.click();
-                      },100);}}
-                        style={{width:'100%',padding:'0.5rem',borderRadius:'0.875rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.8rem',fontWeight:'600',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.4rem'}}
-                        onClick={()=>setSelTask(task)}>
-                        📌 زيد ملاحظة أو تعليق
+                        :next&&!isDone
+                          ?<button onClick={()=>requestMove(task.id,next.id)} style={{width:'100%',padding:'0.75rem',borderRadius:'0.875rem',border:'none',cursor:'pointer',fontWeight:'800',fontSize:'0.9rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem',background:`linear-gradient(135deg,${next.color},${next.color}cc)`,color:'white',boxShadow:`0 4px 12px ${next.color}44`}}>
+                            ✓ انتهيت <span style={{opacity:0.85,fontSize:'0.78rem'}}>→ {next.label}</span>
+                          </button>
+                          :isDone&&<div style={{padding:'0.5rem',borderRadius:'0.75rem',background:`${B.success}10`,border:`1px solid ${B.success}22`,textAlign:'center',fontSize:'0.78rem',color:B.success,fontWeight:'700'}}>✅ مكتملة</div>
+                      }
+                      <button onClick={()=>setSelTask(task)} style={{width:'100%',padding:'0.45rem',borderRadius:'0.875rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.78rem',fontWeight:'600',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.4rem'}}>
+                        💬 حائط الفريق{cc>0?` (${cc})`:''}
                       </button>
                     </div>
                   </div>
@@ -2239,8 +2287,44 @@ function MemberApp({data,persist,showToast,logout,me}){
               );
             })}
           </div>
+        }
+
+        {myPayments.length>0&&(
+          <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'1rem'}}>
+            <div style={{fontWeight:'800',color:B.text,fontSize:'0.9rem',marginBottom:'0.75rem'}}>📊 سجل أرباحي</div>
+            <div style={{display:'flex',flexDirection:'column',gap:'0.375rem',maxHeight:'220px',overflowY:'auto'}}>
+              {myPayments.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).map(p=>(
+                <div key={p.id} style={{display:'flex',alignItems:'center',gap:'0.5rem',padding:'0.5rem 0.625rem',background:B.inputBg,borderRadius:'0.75rem'}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:'0.8rem',fontWeight:'600',color:B.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.taskTitle}</div>
+                    <div style={{fontSize:'0.65rem',color:B.muted}}>{fmtD(p.createdAt)}{p.note?` · ${p.note}`:''}</div>
+                  </div>
+                  <span style={{fontWeight:'800',color:p.status==='paid'?B.success:B.warning,fontVariantNumeric:'tabular-nums'}}>{fmt(p.amount)} دج</span>
+                  <span style={{fontSize:'0.65rem',padding:'2px 6px',borderRadius:'9999px',background:p.status==='paid'?`${B.success}15`:`${B.warning}15`,color:p.status==='paid'?B.success:B.warning,fontWeight:'700',whiteSpace:'nowrap'}}>{p.status==='paid'?'✅':'🟡'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
+
+      {payModal&&(<Modal onClose={()=>setPayModal(null)} title="شحال خدمت على هاذ المهمة؟">
+        <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+          <div style={{padding:'0.75rem',background:B.inputBg,borderRadius:'0.75rem',fontSize:'0.85rem',color:B.text,fontWeight:'600'}}>📋 {payModal.taskTitle}</div>
+          <Field label="💰 المبلغ الذي خدمته (دج)" hint="اختياري">
+            <input type="number" value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder="0 دج" style={INP} autoFocus/>
+          </Field>
+          {payAmt>0&&<div style={{padding:'0.75rem',background:`${roleColor}15`,border:`1px solid ${roleColor}33`,borderRadius:'0.875rem',fontWeight:'800',color:roleColor,textAlign:'center',fontSize:'1.1rem'}}>{fmt(Number(payAmt))} دج</div>}
+          <Field label="ملاحظة (اختياري)">
+            <input value={payNote} onChange={e=>setPayNote(e.target.value)} placeholder="مثال: مع أوفرتايم..." style={INP}/>
+          </Field>
+          <div style={{fontSize:'0.75rem',color:B.muted,padding:'0.5rem 0.75rem',background:`${B.info}10`,borderRadius:'0.75rem'}}>💡 المبلغ يروح للأدمين باش يخلصلك</div>
+          <div style={{display:'flex',gap:'0.5rem'}}>
+            <button onClick={confirmDone} style={{flex:1,padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>✓ انتهيت وأرسل</button>
+            <button onClick={()=>setPayModal(null)} style={{padding:'0.875rem 1rem',borderRadius:'0.75rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontWeight:'700'}}>إلغاء</button>
+          </div>
+        </div>
+      </Modal>)}
 
       {freshTask&&<TaskDetail task={freshTask} data={data} onClose={()=>setSelTask(null)} onUpdate={(patch,msg)=>updTask(freshTask.id,patch,msg)} onDelete={null} onMove={null} onAddComment={addComment} isAdmin={false} me={me}/>}
     </div>
